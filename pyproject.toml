@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "model-archaeologist"
+version = "0.1.0"
+description = "A CLI tool that reverse-engineers public AI models by ingesting papers, blog posts, and benchmarks to hypothesize architectural design decisions."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+    { name = "Model Archaeologist Contributors" }
+]
+keywords = ["ai", "llm", "architecture", "reverse-engineering", "cli"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "openai>=1.30.0",
+    "httpx>=0.27.0",
+    "beautifulsoup4>=4.12.0",
+    "pdfplumber>=0.11.0",
+    "jinja2>=3.1.0",
+    "rich>=13.7.0",
+    "click>=8.1.0",
+    "pydantic>=2.7.0",
+    "tiktoken>=0.7.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "respx>=0.21.0",
+]
+
+[project.scripts]
+model-archaeologist = "model_archaeologist.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["model_archaeologist*"]
+
+[tool.setuptools.package-data]
+"model_archaeologist" = ["templates/*.j2"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

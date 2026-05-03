@@ -1,8 +1,8 @@
 # Architectural Dossier: {{ report.model_name }}
 
-**Generated:** {{ report.generated_at.strftime('%Y-%m-%d %H:%M:%S UTC') }}
+**Generated:** {{ report.generated_at | format_datetime('%Y-%m-%d %H:%M:%S UTC') }}
 **Sources Analyzed:** {{ report.sources_analyzed | length }}
-**Overall Confidence:** {{ report.overall_confidence | confidence_bar }}
+**Overall Confidence:** {{ report.overall_confidence | confidence_emoji }} {{ report.overall_confidence | confidence_bar }} ({{ report.overall_confidence | confidence_label }})
 **Analysis Engine:** Model Archaeologist
 
 ---
@@ -16,107 +16,128 @@
 ## Architecture Hypotheses
 
 {% set arch = report.architecture %}
+
 ### Attention Mechanism
 
-{{ arch.attention_mechanism.confidence | confidence_emoji }} **Confidence:** {{ arch.attention_mechanism.confidence | confidence_bar }}
+**Confidence:** {{ arch.attention_mechanism.confidence | confidence_emoji }} {{ arch.attention_mechanism.confidence | confidence_bar }}
 
 **Hypothesis:** {{ arch.attention_mechanism.hypothesis }}
 
 {% if arch.attention_mechanism.evidence_quotes %}
 **Supporting Evidence:**
+
 {% for quote in arch.attention_mechanism.evidence_quotes %}
 > {{ quote }}
+
 {% endfor %}
 {% endif %}
 {% if arch.attention_mechanism.open_questions %}
 **Open Questions:**
+
 {% for q in arch.attention_mechanism.open_questions %}
 - {{ q }}
 {% endfor %}
+
 {% endif %}
 
 ---
 
 ### Model Size & Structure
 
-{{ arch.model_size.confidence | confidence_emoji }} **Confidence:** {{ arch.model_size.confidence | confidence_bar }}
+**Confidence:** {{ arch.model_size.confidence | confidence_emoji }} {{ arch.model_size.confidence | confidence_bar }}
 
 **Hypothesis:** {{ arch.model_size.hypothesis }}
 
 {% if arch.model_size.evidence_quotes %}
 **Supporting Evidence:**
+
 {% for quote in arch.model_size.evidence_quotes %}
 > {{ quote }}
+
 {% endfor %}
 {% endif %}
 {% if arch.model_size.open_questions %}
 **Open Questions:**
+
 {% for q in arch.model_size.open_questions %}
 - {{ q }}
 {% endfor %}
+
 {% endif %}
 
 ---
 
 ### Positional Encoding
 
-{{ arch.positional_encoding.confidence | confidence_emoji }} **Confidence:** {{ arch.positional_encoding.confidence | confidence_bar }}
+**Confidence:** {{ arch.positional_encoding.confidence | confidence_emoji }} {{ arch.positional_encoding.confidence | confidence_bar }}
 
 **Hypothesis:** {{ arch.positional_encoding.hypothesis }}
 
 {% if arch.positional_encoding.evidence_quotes %}
 **Supporting Evidence:**
+
 {% for quote in arch.positional_encoding.evidence_quotes %}
 > {{ quote }}
+
 {% endfor %}
 {% endif %}
 {% if arch.positional_encoding.open_questions %}
 **Open Questions:**
+
 {% for q in arch.positional_encoding.open_questions %}
 - {{ q }}
 {% endfor %}
+
 {% endif %}
 
 ---
 
 ### Normalization Strategy
 
-{{ arch.normalization.confidence | confidence_emoji }} **Confidence:** {{ arch.normalization.confidence | confidence_bar }}
+**Confidence:** {{ arch.normalization.confidence | confidence_emoji }} {{ arch.normalization.confidence | confidence_bar }}
 
 **Hypothesis:** {{ arch.normalization.hypothesis }}
 
 {% if arch.normalization.evidence_quotes %}
 **Supporting Evidence:**
+
 {% for quote in arch.normalization.evidence_quotes %}
 > {{ quote }}
+
 {% endfor %}
 {% endif %}
 {% if arch.normalization.open_questions %}
 **Open Questions:**
+
 {% for q in arch.normalization.open_questions %}
 - {{ q }}
 {% endfor %}
+
 {% endif %}
 
 ---
 
 ### Mixture-of-Experts (MoE)
 
-{{ arch.moe_usage.confidence | confidence_emoji }} **Confidence:** {{ arch.moe_usage.confidence | confidence_bar }}
+**Confidence:** {{ arch.moe_usage.confidence | confidence_emoji }} {{ arch.moe_usage.confidence | confidence_bar }}
 
 **Hypothesis:** {{ arch.moe_usage.hypothesis }}
 
 {% if arch.moe_usage.evidence_quotes %}
 **Supporting Evidence:**
+
 {% for quote in arch.moe_usage.evidence_quotes %}
 > {{ quote }}
+
 {% endfor %}
 {% endif %}
 {% if arch.moe_usage.open_questions %}
 **Open Questions:**
+
 {% for q in arch.moe_usage.open_questions %}
 - {{ q }}
 {% endfor %}
+
 {% endif %}
 
 ---
@@ -124,65 +145,78 @@
 ## Training Paradigm
 
 {% set training = report.training %}
+
 ### Data Curation
 
-{{ training.data_curation.confidence | confidence_emoji }} **Confidence:** {{ training.data_curation.confidence | confidence_bar }}
+**Confidence:** {{ training.data_curation.confidence | confidence_emoji }} {{ training.data_curation.confidence | confidence_bar }}
 
 **Hypothesis:** {{ training.data_curation.hypothesis }}
 
 {% if training.data_curation.evidence_quotes %}
 **Supporting Evidence:**
+
 {% for quote in training.data_curation.evidence_quotes %}
 > {{ quote }}
+
 {% endfor %}
 {% endif %}
 {% if training.data_curation.open_questions %}
 **Open Questions:**
+
 {% for q in training.data_curation.open_questions %}
 - {{ q }}
 {% endfor %}
+
 {% endif %}
 
 ---
 
 ### Alignment Technique
 
-{{ training.alignment_technique.confidence | confidence_emoji }} **Confidence:** {{ training.alignment_technique.confidence | confidence_bar }}
+**Confidence:** {{ training.alignment_technique.confidence | confidence_emoji }} {{ training.alignment_technique.confidence | confidence_bar }}
 
 **Hypothesis:** {{ training.alignment_technique.hypothesis }}
 
 {% if training.alignment_technique.evidence_quotes %}
 **Supporting Evidence:**
+
 {% for quote in training.alignment_technique.evidence_quotes %}
 > {{ quote }}
+
 {% endfor %}
 {% endif %}
 {% if training.alignment_technique.open_questions %}
 **Open Questions:**
+
 {% for q in training.alignment_technique.open_questions %}
 - {{ q }}
 {% endfor %}
+
 {% endif %}
 
 ---
 
 ### Scaling Strategy
 
-{{ training.scaling_strategy.confidence | confidence_emoji }} **Confidence:** {{ training.scaling_strategy.confidence | confidence_bar }}
+**Confidence:** {{ training.scaling_strategy.confidence | confidence_emoji }} {{ training.scaling_strategy.confidence | confidence_bar }}
 
 **Hypothesis:** {{ training.scaling_strategy.hypothesis }}
 
 {% if training.scaling_strategy.evidence_quotes %}
 **Supporting Evidence:**
+
 {% for quote in training.scaling_strategy.evidence_quotes %}
 > {{ quote }}
+
 {% endfor %}
 {% endif %}
 {% if training.scaling_strategy.open_questions %}
 **Open Questions:**
+
 {% for q in training.scaling_strategy.open_questions %}
 - {{ q }}
 {% endfor %}
+
 {% endif %}
 
 ---
@@ -190,66 +224,89 @@
 ## Capability Sources
 
 {% set caps = report.capabilities %}
+
 ### Emergent Behaviors
 
-{{ caps.emergent_behaviors.confidence | confidence_emoji }} **Confidence:** {{ caps.emergent_behaviors.confidence | confidence_bar }}
+**Confidence:** {{ caps.emergent_behaviors.confidence | confidence_emoji }} {{ caps.emergent_behaviors.confidence | confidence_bar }}
 
 **Hypothesis:** {{ caps.emergent_behaviors.hypothesis }}
 
 {% if caps.emergent_behaviors.evidence_quotes %}
 **Supporting Evidence:**
+
 {% for quote in caps.emergent_behaviors.evidence_quotes %}
 > {{ quote }}
+
 {% endfor %}
 {% endif %}
 {% if caps.emergent_behaviors.open_questions %}
 **Open Questions:**
+
 {% for q in caps.emergent_behaviors.open_questions %}
 - {{ q }}
 {% endfor %}
+
 {% endif %}
 
 ---
 
 ### Fine-tuning Approach
 
-{{ caps.fine_tuning_approach.confidence | confidence_emoji }} **Confidence:** {{ caps.fine_tuning_approach.confidence | confidence_bar }}
+**Confidence:** {{ caps.fine_tuning_approach.confidence | confidence_emoji }} {{ caps.fine_tuning_approach.confidence | confidence_bar }}
 
 **Hypothesis:** {{ caps.fine_tuning_approach.hypothesis }}
 
 {% if caps.fine_tuning_approach.evidence_quotes %}
 **Supporting Evidence:**
+
 {% for quote in caps.fine_tuning_approach.evidence_quotes %}
 > {{ quote }}
+
 {% endfor %}
 {% endif %}
 {% if caps.fine_tuning_approach.open_questions %}
 **Open Questions:**
+
 {% for q in caps.fine_tuning_approach.open_questions %}
 - {{ q }}
 {% endfor %}
+
 {% endif %}
 
 ---
 
 ### Efficiency Optimizations
 
-{{ caps.efficiency_optimizations.confidence | confidence_emoji }} **Confidence:** {{ caps.efficiency_optimizations.confidence | confidence_bar }}
+**Confidence:** {{ caps.efficiency_optimizations.confidence | confidence_emoji }} {{ caps.efficiency_optimizations.confidence | confidence_bar }}
 
 **Hypothesis:** {{ caps.efficiency_optimizations.hypothesis }}
 
 {% if caps.efficiency_optimizations.evidence_quotes %}
 **Supporting Evidence:**
+
 {% for quote in caps.efficiency_optimizations.evidence_quotes %}
 > {{ quote }}
+
 {% endfor %}
 {% endif %}
 {% if caps.efficiency_optimizations.open_questions %}
 **Open Questions:**
+
 {% for q in caps.efficiency_optimizations.open_questions %}
 - {{ q }}
 {% endfor %}
+
 {% endif %}
+
+---
+
+## Confidence Summary
+
+| Category | Aspect | Confidence | Level |
+|----------|--------|------------|-------|
+{% for category, aspect, hyp in report.all_hypotheses %}
+| {{ category }} | {{ aspect }} | {{ "{:.0%}".format(hyp.confidence) }} | {{ hyp.confidence | confidence_emoji }} {{ hyp.confidence | confidence_label }} |
+{% endfor %}
 
 ---
 
@@ -269,8 +326,9 @@ _No sources recorded._
 ## Additional Notes
 
 {{ report.additional_notes }}
+
 {% endif %}
 
 ---
 
-_Generated by [Model Archaeologist](https://github.com/example/model-archaeologist)_
+_Generated by [Model Archaeologist](https://github.com/example/model-archaeologist) — an automated architectural research tool._

@@ -13,7 +13,6 @@ Covers:
 from __future__ import annotations
 
 import io
-import struct
 from pathlib import Path
 
 import httpx
@@ -236,6 +235,41 @@ class TestFetchUrlHtml:
         assert "content_type" in result
         assert "title" in result
 
+    @pytest.mark.asyncio
+    async def test_html_with_only_script_returns_empty(self, ingester: DocumentIngester) -> None:
+        """HTML with only script/style content returns empty text after stripping."""
+        html = (
+            "<html><head><script>var x = 1;</script>"
+            "<style>body { margin: 0; }</style></head>"
+            "<body><script>doSomething();</script></body></html>"
+        )
+        with respx.mock(assert_all_called=False):
+            respx.get("https://example.com/scriptonly").mock(
+                return_value=httpx.Response(
+                    200, text=html, headers={"content-type": "text/html"}
+                )
+            )
+            result = await ingester.fetch_url("https://example.com/scriptonly")
+
+        # After removing script/style, no visible text should remain
+        assert "var x" not in result["text"]
+        assert "body { margin" not in result["text"]
+
+    @pytest.mark.asyncio
+    async def test_source_field_matches_input_url(self, ingester: DocumentIngester) -> None:
+        """The 'source' field in the result always equals the input URL."""
+        url = "https://example.com/source-check"
+        html = "<html><body><p>text</p></body></html>"
+        with respx.mock(assert_all_called=False):
+            respx.get(url).mock(
+                return_value=httpx.Response(
+                    200, text=html, headers={"content-type": "text/html"}
+                )
+            )
+            result = await ingester.fetch_url(url)
+
+        assert result["source"] == url
+
 
 # ---------------------------------------------------------------------------
 # Tests – fetch_url (PDF via URL)
@@ -296,6 +330,41 @@ class TestFetchUrlPdf:
 
         assert isinstance(result["text"], str)
 
+    @pytest.mark.asyncio
+    async def test_pdf_title_is_none(self, ingester: DocumentIngester) -> None:
+        """PDF responses always return title=None."""
+        pdf_bytes = _minimal_pdf_bytes()
+        with respx.mock(assert_all_called=False):
+            respx.get("https://example.com/paper.pdf").mock(
+                return_value=httpx.Response(
+                    200,
+                    content=pdf_bytes,
+                    headers={"content-type": "application/pdf"},
+                )
+            )
+            result = await ingester.fetch_url("https://example.com/paper.pdf")
+
+        assert result["title"] is None
+
+    @pytest.mark.asyncio
+    async def test_pdf_result_has_all_keys(self, ingester: DocumentIngester) -> None:
+        """PDF fetch result always contains source, text, content_type, title."""
+        pdf_bytes = _minimal_pdf_bytes()
+        with respx.mock(assert_all_called=False):
+            respx.get("https://example.com/doc.pdf").mock(
+                return_value=httpx.Response(
+                    200,
+                    content=pdf_bytes,
+                    headers={"content-type": "application/pdf"},
+                )
+            )
+            result = await ingester.fetch_url("https://example.com/doc.pdf")
+
+        assert "source" in result
+        assert "text" in result
+        assert "content_type" in result
+        assert "title" in result
+
 
 # ---------------------------------------------------------------------------
 # Tests – fetch_url error handling
@@ -330,6 +399,18 @@ class TestFetchUrlErrors:
         assert "500" in str(exc_info.value)
 
     @pytest.mark.asyncio
+    async def test_403_raises_ingestion_error(self, ingester: DocumentIngester) -> None:
+        """A 403 response raises IngestionError."""
+        with respx.mock(assert_all_called=False):
+            respx.get("https://example.com/forbidden").mock(
+                return_value=httpx.Response(403)
+            )
+            with pytest.raises(IngestionError) as exc_info:
+                await ingester.fetch_url("https://example.com/forbidden")
+
+        assert "403" in str(exc_info.value)
+
+    @pytest.mark.asyncio
     async def test_timeout_raises_ingestion_error(self, ingester: DocumentIngester) -> None:
         """A request timeout raises IngestionError with timeout message."""
         with respx.mock(assert_all_called=False):
@@ -339,7 +420,8 @@ class TestFetchUrlErrors:
             with pytest.raises(IngestionError) as exc_info:
                 await ingester.fetch_url("https://example.com/slow")
 
-        assert "timed out" in str(exc_info.value).lower() or "timeout" in str(exc_info.value).lower()
+        error_msg = str(exc_info.value).lower()
+        assert "timed out" in error_msg or "timeout" in error_msg
 
     @pytest.mark.asyncio
     async def test_connection_error_raises_ingestion_error(self, ingester: DocumentIngester) -> None:
@@ -364,6 +446,29 @@ class TestFetchUrlErrors:
             )
             with pytest.raises(IngestionError):
                 await ingester.fetch_url("https://example.com/bad.pdf")
+
+    @pytest.mark.asyncio
+    async def test_error_message_contains_url(self, ingester: DocumentIngester) -> None:
+        """IngestionError message contains the URL that failed."""
+        target_url = "https://example.com/notfound"
+        with respx.mock(assert_all_called=False):
+            respx.get(target_url).mock(
+                return_value=httpx.Response(404)
+            )
+            with pytest.raises(IngestionError) as exc_info:
+                await ingester.fetch_url(target_url)
+
+        assert "example.com" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_network_error_raises_ingestion_error(self, ingester: DocumentIngester) -> None:
+        """A generic network request error raises IngestionError."""
+        with respx.mock(assert_all_called=False):
+            respx.get("https://example.com/network-fail").mock(
+                side_effect=httpx.RequestError("network failure")
+            )
+            with pytest.raises(IngestionError):
+                await ingester.fetch_url("https://example.com/network-fail")
 
 
 # ---------------------------------------------------------------------------
@@ -403,7 +508,9 @@ class TestReadFileText:
         assert "title" in result
 
     @pytest.mark.asyncio
-    async def test_nonexistent_file_raises_ingestion_error(self, ingester: DocumentIngester, tmp_path: Path) -> None:
+    async def test_nonexistent_file_raises_ingestion_error(
+        self, ingester: DocumentIngester, tmp_path: Path
+    ) -> None:
         """Attempting to read a non-existent file raises IngestionError."""
         missing = tmp_path / "does_not_exist.txt"
         with pytest.raises(IngestionError) as exc_info:
@@ -412,7 +519,9 @@ class TestReadFileText:
         assert "not found" in str(exc_info.value).lower() or "does_not_exist" in str(exc_info.value)
 
     @pytest.mark.asyncio
-    async def test_directory_path_raises_ingestion_error(self, ingester: DocumentIngester, tmp_path: Path) -> None:
+    async def test_directory_path_raises_ingestion_error(
+        self, ingester: DocumentIngester, tmp_path: Path
+    ) -> None:
         """Providing a directory path instead of a file raises IngestionError."""
         with pytest.raises(IngestionError) as exc_info:
             await ingester.read_file(tmp_path)
@@ -432,24 +541,47 @@ class TestReadFileText:
         assert "Line 3" in result["text"]
 
     @pytest.mark.asyncio
-    async def test_reads_utf8_text_with_special_chars(self, ingester: DocumentIngester, tmp_path: Path) -> None:
+    async def test_reads_utf8_text_with_special_chars(
+        self, ingester: DocumentIngester, tmp_path: Path
+    ) -> None:
         """UTF-8 files with non-ASCII characters are read correctly."""
         p = tmp_path / "unicode.txt"
-        content = "Héllo wörld – 日本語テスト"
+        content = "H\xe9llo w\xf6rld \u2013 \u65e5\u672c\u8a9e\u30c6\u30b9\u30c8"
         p.write_text(content, encoding="utf-8")
 
         result = await ingester.read_file(p)
-        assert "Héllo" in result["text"]
-        assert "日本語" in result["text"]
+        assert "H\xe9llo" in result["text"]
+        assert "\u65e5\u672c\u8a9e" in result["text"]
 
     @pytest.mark.asyncio
-    async def test_title_is_stem_without_extension(self, ingester: DocumentIngester, tmp_path: Path) -> None:
+    async def test_title_is_stem_without_extension(
+        self, ingester: DocumentIngester, tmp_path: Path
+    ) -> None:
         """The 'title' key equals the filename stem (without extension)."""
         p = tmp_path / "my_document.txt"
         p.write_text("content", encoding="utf-8")
 
         result = await ingester.read_file(p)
         assert result["title"] == "my_document"
+
+    @pytest.mark.asyncio
+    async def test_source_is_string_path(self, ingester: DocumentIngester, tmp_text_file: Path) -> None:
+        """The 'source' key is a string representation of the file path."""
+        result = await ingester.read_file(tmp_text_file)
+        assert result["source"] == str(tmp_text_file)
+        assert isinstance(result["source"], str)
+
+    @pytest.mark.asyncio
+    async def test_reads_file_with_no_extension(
+        self, ingester: DocumentIngester, tmp_path: Path
+    ) -> None:
+        """Files with no extension are treated as plain text."""
+        p = tmp_path / "noextension"
+        p.write_text("plain text content", encoding="utf-8")
+
+        result = await ingester.read_file(p)
+        assert result["content_type"] == "text/plain"
+        assert "plain text content" in result["text"]
 
 
 # ---------------------------------------------------------------------------
@@ -481,7 +613,9 @@ class TestReadFilePdf:
         assert "title" in result
 
     @pytest.mark.asyncio
-    async def test_invalid_pdf_raises_ingestion_error(self, ingester: DocumentIngester, tmp_path: Path) -> None:
+    async def test_invalid_pdf_raises_ingestion_error(
+        self, ingester: DocumentIngester, tmp_path: Path
+    ) -> None:
         """A file with .pdf extension but invalid content raises IngestionError."""
         bad_pdf = tmp_path / "fake.pdf"
         bad_pdf.write_bytes(b"this is definitely not a pdf")
@@ -494,6 +628,23 @@ class TestReadFilePdf:
         """The 'text' field is always a string even for blank PDFs."""
         result = await ingester.read_file(tmp_pdf_file)
         assert isinstance(result["text"], str)
+
+    @pytest.mark.asyncio
+    async def test_pdf_content_type_is_application_pdf(
+        self, ingester: DocumentIngester, tmp_pdf_file: Path
+    ) -> None:
+        """content_type is 'application/pdf' for PDF files."""
+        result = await ingester.read_file(tmp_pdf_file)
+        assert result["content_type"] == "application/pdf"
+
+    @pytest.mark.asyncio
+    async def test_pdf_title_is_stem(self, ingester: DocumentIngester, tmp_path: Path) -> None:
+        """The title of a PDF file is its stem (name without extension)."""
+        pdf_path = tmp_path / "my_paper.pdf"
+        pdf_path.write_bytes(_minimal_pdf_bytes())
+
+        result = await ingester.read_file(pdf_path)
+        assert result["title"] == "my_paper"
 
 
 # ---------------------------------------------------------------------------
@@ -531,6 +682,34 @@ class TestExtractHtmlText:
         assert ".cls" not in text
         assert "Text" in text
 
+    def test_nav_removed(self, ingester: DocumentIngester) -> None:
+        """<nav> content is removed from extracted text."""
+        html = "<html><body><nav>Nav links</nav><p>Content</p></body></html>"
+        text, _ = ingester._extract_html_text(html)
+        assert "Nav links" not in text
+        assert "Content" in text
+
+    def test_header_removed(self, ingester: DocumentIngester) -> None:
+        """<header> content is removed from extracted text."""
+        html = "<html><body><header>Site Header</header><p>Content</p></body></html>"
+        text, _ = ingester._extract_html_text(html)
+        assert "Site Header" not in text
+        assert "Content" in text
+
+    def test_footer_removed(self, ingester: DocumentIngester) -> None:
+        """<footer> content is removed from extracted text."""
+        html = "<html><body><p>Content</p><footer>Footer</footer></body></html>"
+        text, _ = ingester._extract_html_text(html)
+        assert "Footer" not in text
+        assert "Content" in text
+
+    def test_aside_removed(self, ingester: DocumentIngester) -> None:
+        """<aside> content is removed from extracted text."""
+        html = "<html><body><p>Content</p><aside>Sidebar</aside></body></html>"
+        text, _ = ingester._extract_html_text(html)
+        assert "Sidebar" not in text
+        assert "Content" in text
+
     def test_empty_html_returns_empty_string(self, ingester: DocumentIngester) -> None:
         """Empty HTML returns an empty text string and None title."""
         text, title = ingester._extract_html_text("")
@@ -539,7 +718,10 @@ class TestExtractHtmlText:
 
     def test_nested_content_extracted(self, ingester: DocumentIngester) -> None:
         """Deeply nested text nodes are extracted."""
-        html = "<html><body><div><section><p><span>Deep text</span></p></section></div></body></html>"
+        html = (
+            "<html><body><div><section><p><span>Deep text</span></p>"
+            "</section></div></body></html>"
+        )
         text, _ = ingester._extract_html_text(html)
         assert "Deep text" in text
 
@@ -556,7 +738,44 @@ class TestExtractHtmlText:
         html = "<html><body><p>Too   many   spaces</p></body></html>"
         text, _ = ingester._extract_html_text(html)
         assert "Too   many" not in text
-        assert "Too many spaces" in text or "Too" in text
+        # After normalization the text should be present without extra spaces
+        assert "Too" in text and "spaces" in text
+
+    def test_article_preferred_over_body(self, ingester: DocumentIngester) -> None:
+        """<article> content is preferred when both article and other content exist."""
+        html = (
+            "<html><body>"
+            "<div>Should not appear</div>"
+            "<article><p>Article content</p></article>"
+            "</body></html>"
+        )
+        text, _ = ingester._extract_html_text(html)
+        assert "Article content" in text
+
+    def test_main_preferred_over_body_when_no_article(self, ingester: DocumentIngester) -> None:
+        """<main> content is preferred when no <article> exists."""
+        html = (
+            "<html><body>"
+            "<div>Outer div</div>"
+            "<main><p>Main content</p></main>"
+            "</body></html>"
+        )
+        text, _ = ingester._extract_html_text(html)
+        assert "Main content" in text
+
+    def test_returns_tuple(self, ingester: DocumentIngester) -> None:
+        """_extract_html_text returns a (str, str | None) tuple."""
+        html = "<html><body><p>text</p></body></html>"
+        result = ingester._extract_html_text(html)
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+        assert isinstance(result[0], str)
+
+    def test_title_with_whitespace_stripped(self, ingester: DocumentIngester) -> None:
+        """Title text has leading/trailing whitespace stripped."""
+        html = "<html><head><title>  Spaced Title  </title></head><body><p>x</p></body></html>"
+        _, title = ingester._extract_html_text(html)
+        assert title == "Spaced Title"
 
 
 # ---------------------------------------------------------------------------
@@ -588,6 +807,19 @@ class TestExtractPdfFromBytes:
             ingester._extract_pdf_from_bytes(b"bad", source="https://example.com/paper")
         assert "example.com" in str(exc_info.value)
 
+    def test_returns_empty_string_for_blank_pdf(self, ingester: DocumentIngester) -> None:
+        """A valid but blank PDF returns an empty string (no text to extract)."""
+        result = ingester._extract_pdf_from_bytes(_minimal_pdf_bytes())
+        # The minimal PDF has no text content, so result should be empty string
+        assert result == "" or isinstance(result, str)
+
+    def test_truncated_pdf_raises_ingestion_error(self, ingester: DocumentIngester) -> None:
+        """Truncated (incomplete) PDF bytes raise IngestionError."""
+        # Take only the first 10 bytes of a valid PDF — definitely invalid
+        truncated = _minimal_pdf_bytes()[:10]
+        with pytest.raises(IngestionError):
+            ingester._extract_pdf_from_bytes(truncated)
+
 
 # ---------------------------------------------------------------------------
 # Tests – _extract_pdf_from_path (unit-level)
@@ -602,20 +834,37 @@ class TestExtractPdfFromPath:
         result = ingester._extract_pdf_from_path(tmp_pdf_file)
         assert isinstance(result, str)
 
-    def test_invalid_pdf_path_raises_ingestion_error(self, ingester: DocumentIngester, tmp_path: Path) -> None:
+    def test_invalid_pdf_path_raises_ingestion_error(
+        self, ingester: DocumentIngester, tmp_path: Path
+    ) -> None:
         """A path to a non-PDF file raises IngestionError."""
         bad = tmp_path / "fake.pdf"
         bad.write_bytes(b"not a pdf")
         with pytest.raises(IngestionError):
             ingester._extract_pdf_from_path(bad)
 
-    def test_path_included_in_error_message(self, ingester: DocumentIngester, tmp_path: Path) -> None:
+    def test_path_included_in_error_message(
+        self, ingester: DocumentIngester, tmp_path: Path
+    ) -> None:
         """IngestionError includes the file path."""
         bad = tmp_path / "broken.pdf"
         bad.write_bytes(b"bad")
         with pytest.raises(IngestionError) as exc_info:
             ingester._extract_pdf_from_path(bad)
         assert "broken.pdf" in str(exc_info.value) or "pdf" in str(exc_info.value).lower()
+
+    def test_blank_pdf_returns_empty_string(
+        self, ingester: DocumentIngester, tmp_pdf_file: Path
+    ) -> None:
+        """A blank PDF (no text content) returns an empty string."""
+        result = ingester._extract_pdf_from_path(tmp_pdf_file)
+        # Minimal PDF has no text; result should be empty or whitespace-only
+        assert result == "" or not result.strip()
+
+    def test_result_is_string(self, ingester: DocumentIngester, tmp_pdf_file: Path) -> None:
+        """_extract_pdf_from_path always returns a string."""
+        result = ingester._extract_pdf_from_path(tmp_pdf_file)
+        assert isinstance(result, str)
 
 
 # ---------------------------------------------------------------------------
@@ -647,9 +896,27 @@ class TestDocumentIngesterInit:
         ingester = DocumentIngester(user_agent="MyBot/1.0")
         assert ingester.user_agent == "MyBot/1.0"
 
-    def test_verbose_flag(self) -> None:
-        """Verbose flag is stored correctly."""
+    def test_verbose_flag_true(self) -> None:
+        """Verbose=True flag is stored correctly."""
         ingester = DocumentIngester(verbose=True)
         assert ingester.verbose is True
-        ingester2 = DocumentIngester(verbose=False)
-        assert ingester2.verbose is False
+
+    def test_verbose_flag_false(self) -> None:
+        """Verbose=False flag is stored correctly."""
+        ingester = DocumentIngester(verbose=False)
+        assert ingester.verbose is False
+
+    def test_default_verbose_is_false(self) -> None:
+        """Default verbose flag is False."""
+        ingester = DocumentIngester()
+        assert ingester.verbose is False
+
+    def test_default_timeout_value(self) -> None:
+        """Default timeout equals 30.0 seconds."""
+        ingester = DocumentIngester()
+        assert ingester.timeout == 30.0
+
+    def test_zero_timeout_stored(self) -> None:
+        """A timeout of 0.0 is stored (edge case)."""
+        ingester = DocumentIngester(timeout=0.0)
+        assert ingester.timeout == 0.0

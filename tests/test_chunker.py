@@ -170,7 +170,7 @@ class TestCountTokens:
 
     def test_unicode_text(self, default_chunker: TextChunker) -> None:
         """Unicode text returns a consistent token count."""
-        text = "日本語テスト"
+        text = "\u65e5\u672c\u8a9e\u30c6\u30b9\u30c8"
         expected = _token_count(text)
         assert default_chunker.count_tokens(text) == expected
 
@@ -309,15 +309,7 @@ class TestSplitOverlap:
 
         for i in range(len(chunks) - 1):
             tokens_i = enc.encode(chunks[i])
-            tokens_next = enc.encode(chunks[i + 1])
-            # Last token of chunk i should not equal first token of chunk i+1
-            # (they should be completely disjoint)
-            # We verify by reconstructing: there should be no token-level overlap
-            # The tail of chunk[i] is tokens_i[-1:]
-            # The head of chunk[i+1] is tokens_next[:1]
-            # They must not overlap - i.e. last token of tokens_i < first of tokens_next
-            # in terms of position in the original
-            # Simpler: just verify lengths add up correctly
+            # Verify each full (non-final) chunk has exactly chunk_size tokens
             assert len(tokens_i) == chunker.chunk_size or i == len(chunks) - 2
 
     def test_large_overlap_many_chunks(self) -> None:
@@ -591,7 +583,7 @@ class TestEdgeCases:
     def test_unicode_text_split_correctly(self) -> None:
         """Unicode text (CJK, emoji) is split without panicking or losing data."""
         chunker = TextChunker(chunk_size=10, chunk_overlap=2)
-        text = "日本語テスト " * 20
+        text = "\u65e5\u672c\u8a9e\u30c6\u30b9\u30c8 " * 20
         chunks = chunker.split(text)
         assert len(chunks) > 0
         for chunk in chunks:
@@ -608,7 +600,7 @@ class TestEdgeCases:
     def test_split_iter_and_split_agree_on_unicode(self) -> None:
         """split and split_iter return identical results for Unicode input."""
         chunker = TextChunker(chunk_size=8, chunk_overlap=2)
-        text = "Héllo wörld – transformer! " * 15
+        text = "H\xe9llo w\xf6rld \u2013 transformer! " * 15
         assert chunker.split(text) == list(chunker.split_iter(text))
 
     def test_merge_then_split_preserves_semantics(self) -> None:

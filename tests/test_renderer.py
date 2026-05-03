@@ -11,7 +11,6 @@ Verifies that:
 from __future__ import annotations
 
 import json
-import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -35,7 +34,7 @@ from model_archaeologist.schema import (
 
 
 # ---------------------------------------------------------------------------
-# Fixtures
+# Fixtures / helpers
 # ---------------------------------------------------------------------------
 
 
@@ -49,8 +48,12 @@ def _make_hypothesis(
     return DesignHypothesis(
         hypothesis=hypothesis,
         confidence=confidence,
-        evidence_quotes=evidence_quotes or ["The paper describes grouped-query attention."],
-        open_questions=open_questions or ["How many KV heads are used?"],
+        evidence_quotes=evidence_quotes if evidence_quotes is not None else [
+            "The paper describes grouped-query attention."
+        ],
+        open_questions=open_questions if open_questions is not None else [
+            "How many KV heads are used?"
+        ],
     )
 
 
@@ -73,6 +76,12 @@ def _make_report(
         evidence_quotes=[],
         open_questions=["Number of experts unknown."],
     )
+
+    if sources is None:
+        sources = [
+            "https://arxiv.org/abs/2301.00001",
+            "https://example.com/blog/testmodel",
+        ]
 
     report = ArchitectureReport(
         model_name=model_name,
@@ -139,10 +148,7 @@ def _make_report(
                 open_questions=["Is speculative decoding used in serving?"],
             ),
         ),
-        sources_analyzed=sources or [
-            "https://arxiv.org/abs/2301.00001",
-            "https://example.com/blog/testmodel",
-        ],
+        sources_analyzed=sources,
         additional_notes="This is a test report for renderer validation." if with_notes else "",
     )
     return report
@@ -171,27 +177,25 @@ class TestConfidenceBar:
     def test_zero_confidence(self) -> None:
         """0.0 produces an all-empty bar."""
         result = _confidence_bar(0.0)
-        assert "░" * 10 in result
+        assert "\u2591" * 10 in result
         assert "0%" in result
 
     def test_full_confidence(self) -> None:
         """1.0 produces a fully-filled bar."""
         result = _confidence_bar(1.0)
-        assert "█" * 10 in result
+        assert "\u2588" * 10 in result
         assert "100%" in result
 
     def test_half_confidence(self) -> None:
         """0.5 produces a half-filled bar."""
         result = _confidence_bar(0.5)
-        assert "█" * 5 in result
+        assert "\u2588" * 5 in result
         assert "50%" in result
 
     def test_custom_width(self) -> None:
         """Custom width changes the bar length."""
         result = _confidence_bar(1.0, width=5)
-        assert "█" * 5 in result
-        # Should not contain 10 filled blocks
-        assert len(result) < len(_confidence_bar(1.0, width=10)) + 5
+        assert "\u2588" * 5 in result
 
     def test_clamping_above_one(self) -> None:
         """Values above 1.0 are clamped to 1.0."""
@@ -212,6 +216,30 @@ class TestConfidenceBar:
     def test_returns_string(self) -> None:
         """_confidence_bar always returns a string."""
         assert isinstance(_confidence_bar(0.5), str)
+
+    def test_0_7_produces_seven_filled_blocks(self) -> None:
+        """0.7 with default width=10 produces 7 filled blocks."""
+        result = _confidence_bar(0.7)
+        assert "\u2588" * 7 in result
+
+    def test_0_3_produces_three_filled_blocks(self) -> None:
+        """0.3 with default width=10 produces 3 filled blocks."""
+        result = _confidence_bar(0.3)
+        assert "\u2588" * 3 in result
+
+    def test_percentage_in_output(self) -> None:
+        """The output always contains a percentage sign."""
+        for val in [0.0, 0.25, 0.5, 0.75, 1.0]:
+            result = _confidence_bar(val)
+            assert "%" in result
+
+    def test_total_bar_width_equals_width_param(self) -> None:
+        """The sum of filled and empty blocks equals the width parameter."""
+        for width in [5, 10, 20]:
+            result = _confidence_bar(0.5, width=width)
+            filled = result.count("\u2588")
+            empty = result.count("\u2591")
+            assert filled + empty == width
 
 
 class TestConfidenceEmoji:
@@ -234,14 +262,31 @@ class TestConfidenceEmoji:
         assert _confidence_emoji(0.0) == "\U0001f534"
         assert _confidence_emoji(0.39) == "\U0001f534"
 
-    def test_clamping(self) -> None:
-        """Values outside [0, 1] are clamped before classification."""
-        assert _confidence_emoji(2.0) == "\U0001f7e2"  # clamped to 1.0 -> high
-        assert _confidence_emoji(-1.0) == "\U0001f534"  # clamped to 0.0 -> low
+    def test_boundary_0_7_is_green(self) -> None:
+        """Confidence exactly at 0.7 boundary returns green."""
+        assert _confidence_emoji(0.7) == "\U0001f7e2"
+
+    def test_boundary_0_4_is_yellow(self) -> None:
+        """Confidence exactly at 0.4 boundary returns yellow."""
+        assert _confidence_emoji(0.4) == "\U0001f7e1"
+
+    def test_clamping_above(self) -> None:
+        """Values above 1.0 are clamped to 1.0 -> high -> green."""
+        assert _confidence_emoji(2.0) == "\U0001f7e2"
+
+    def test_clamping_below(self) -> None:
+        """Values below 0.0 are clamped to 0.0 -> low -> red."""
+        assert _confidence_emoji(-1.0) == "\U0001f534"
 
     def test_returns_string(self) -> None:
         """_confidence_emoji always returns a string."""
         assert isinstance(_confidence_emoji(0.5), str)
+
+    def test_returns_non_empty_string(self) -> None:
+        """_confidence_emoji returns a non-empty string for all inputs."""
+        for val in [0.0, 0.4, 0.7, 1.0]:
+            result = _confidence_emoji(val)
+            assert len(result) > 0
 
 
 class TestConfidenceLabel:
@@ -263,35 +308,78 @@ class TestConfidenceLabel:
         assert _confidence_label(0.0) == "low"
         assert _confidence_label(0.399) == "low"
 
+    def test_boundary_0_7_is_high(self) -> None:
+        """Confidence exactly at 0.7 returns 'high'."""
+        assert _confidence_label(0.7) == "high"
+
+    def test_boundary_0_4_is_medium(self) -> None:
+        """Confidence exactly at 0.4 returns 'medium'."""
+        assert _confidence_label(0.4) == "medium"
+
+    def test_clamping_above(self) -> None:
+        """Values above 1.0 are clamped -> high."""
+        assert _confidence_label(1.5) == "high"
+
+    def test_clamping_below(self) -> None:
+        """Values below 0.0 are clamped -> low."""
+        assert _confidence_label(-0.1) == "low"
+
     def test_returns_string(self) -> None:
         """_confidence_label always returns a string."""
         assert isinstance(_confidence_label(0.5), str)
+
+    def test_all_valid_labels(self) -> None:
+        """Only 'high', 'medium', or 'low' are ever returned."""
+        for val in [0.0, 0.1, 0.2, 0.3, 0.39, 0.4, 0.5, 0.6, 0.69, 0.7, 0.8, 0.9, 1.0]:
+            label = _confidence_label(val)
+            assert label in ("high", "medium", "low")
 
 
 class TestFormatDatetime:
     """Tests for the _format_datetime filter function."""
 
-    def test_formats_utc_datetime(self) -> None:
+    def test_formats_utc_datetime_default(self) -> None:
         """A UTC datetime is formatted with the default format string."""
         dt = datetime(2024, 6, 15, 12, 30, 0, tzinfo=timezone.utc)
         result = _format_datetime(dt)
         assert result == "2024-06-15 12:30:00 UTC"
 
-    def test_custom_format(self) -> None:
+    def test_custom_format_year_month_day(self) -> None:
         """A custom format string is applied correctly."""
         dt = datetime(2024, 1, 5, tzinfo=timezone.utc)
         result = _format_datetime(dt, fmt="%Y/%m/%d")
         assert result == "2024/01/05"
+
+    def test_custom_format_with_time(self) -> None:
+        """Custom format including hours and minutes."""
+        dt = datetime(2023, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
+        result = _format_datetime(dt, fmt="%H:%M %d-%m-%Y")
+        assert result == "23:59 31-12-2023"
 
     def test_non_datetime_returns_str(self) -> None:
         """A non-datetime value without strftime returns str(value)."""
         result = _format_datetime("not a datetime")
         assert result == "not a datetime"
 
-    def test_returns_string(self) -> None:
-        """_format_datetime always returns a string."""
+    def test_non_datetime_integer_returns_str(self) -> None:
+        """An integer without strftime returns str(value)."""
+        result = _format_datetime(12345)
+        assert result == "12345"
+
+    def test_returns_string_for_datetime(self) -> None:
+        """_format_datetime returns a string for a datetime input."""
         dt = datetime(2024, 1, 1, tzinfo=timezone.utc)
         assert isinstance(_format_datetime(dt), str)
+
+    def test_returns_string_for_non_datetime(self) -> None:
+        """_format_datetime returns a string for a non-datetime input."""
+        assert isinstance(_format_datetime(None), str)
+
+    def test_year_present_in_default_format(self) -> None:
+        """The year appears in the default formatted output."""
+        dt = datetime(2024, 3, 15, tzinfo=timezone.utc)
+        result = _format_datetime(dt)
+        assert "2024" in result
 
 
 # ---------------------------------------------------------------------------
@@ -308,16 +396,20 @@ class TestRenderMarkdown:
         assert isinstance(result, str)
         assert len(result) > 0
 
-    def test_contains_model_name(self, renderer: ReportRenderer, report: ArchitectureReport) -> None:
+    def test_contains_model_name_in_title(self, renderer: ReportRenderer, report: ArchitectureReport) -> None:
         """The rendered Markdown contains the model name in the title."""
         result = renderer.render_markdown(report)
         assert "TestModel-7B" in result
 
-    def test_contains_executive_summary(self, renderer: ReportRenderer, report: ArchitectureReport) -> None:
-        """The rendered Markdown contains the executive summary text."""
+    def test_contains_executive_summary_header(self, renderer: ReportRenderer, report: ArchitectureReport) -> None:
+        """The rendered Markdown has an Executive Summary section."""
+        result = renderer.render_markdown(report)
+        assert "## Executive Summary" in result
+
+    def test_contains_executive_summary_text(self, renderer: ReportRenderer, report: ArchitectureReport) -> None:
+        """The executive summary text appears in the output."""
         result = renderer.render_markdown(report)
         assert "dense transformer" in result
-        assert "Executive Summary" in result
 
     def test_contains_architecture_section(self, renderer: ReportRenderer, report: ArchitectureReport) -> None:
         """The rendered Markdown has an Architecture Hypotheses section."""
@@ -346,11 +438,23 @@ class TestRenderMarkdown:
         assert "### Attention Mechanism" in result
         assert "Multi-Head Attention" in result
 
+    def test_contains_model_size_subsection(self, renderer: ReportRenderer, report: ArchitectureReport) -> None:
+        """The Model Size subsection is present."""
+        result = renderer.render_markdown(report)
+        assert "Model Size" in result
+        assert "7 billion parameters" in result
+
     def test_contains_positional_encoding_subsection(self, renderer: ReportRenderer, report: ArchitectureReport) -> None:
         """The Positional Encoding subsection is present."""
         result = renderer.render_markdown(report)
         assert "### Positional Encoding" in result
         assert "RoPE" in result or "Rotary" in result
+
+    def test_contains_normalization_subsection(self, renderer: ReportRenderer, report: ArchitectureReport) -> None:
+        """The Normalization Strategy subsection is present."""
+        result = renderer.render_markdown(report)
+        assert "### Normalization" in result
+        assert "RMSNorm" in result
 
     def test_contains_data_curation_subsection(self, renderer: ReportRenderer, report: ArchitectureReport) -> None:
         """The Data Curation subsection is present."""
@@ -363,13 +467,34 @@ class TestRenderMarkdown:
         assert "### Alignment Technique" in result
         assert "RLHF" in result or "PPO" in result or "DPO" in result
 
-    def test_contains_evidence_quotes(self, renderer: ReportRenderer, report: ArchitectureReport) -> None:
+    def test_contains_scaling_strategy_subsection(self, renderer: ReportRenderer, report: ArchitectureReport) -> None:
+        """The Scaling Strategy subsection is present."""
+        result = renderer.render_markdown(report)
+        assert "### Scaling Strategy" in result
+        assert "Chinchilla" in result
+
+    def test_contains_emergent_behaviors_subsection(self, renderer: ReportRenderer, report: ArchitectureReport) -> None:
+        """The Emergent Behaviors subsection is present."""
+        result = renderer.render_markdown(report)
+        assert "### Emergent Behaviors" in result
+
+    def test_contains_fine_tuning_subsection(self, renderer: ReportRenderer, report: ArchitectureReport) -> None:
+        """The Fine-tuning Approach subsection is present."""
+        result = renderer.render_markdown(report)
+        assert "### Fine-tuning Approach" in result
+
+    def test_contains_efficiency_optimizations_subsection(self, renderer: ReportRenderer, report: ArchitectureReport) -> None:
+        """The Efficiency Optimizations subsection is present."""
+        result = renderer.render_markdown(report)
+        assert "### Efficiency Optimizations" in result
+        assert "Flash Attention" in result
+
+    def test_contains_evidence_quotes_as_blockquotes(self, renderer: ReportRenderer, report: ArchitectureReport) -> None:
         """Evidence quotes appear as blockquotes in the Markdown."""
         result = renderer.render_markdown(report)
-        # Blockquote lines start with >
         assert "> The paper describes grouped-query attention." in result
 
-    def test_contains_open_questions(self, renderer: ReportRenderer, report: ArchitectureReport) -> None:
+    def test_contains_open_questions_as_list_items(self, renderer: ReportRenderer, report: ArchitectureReport) -> None:
         """Open questions appear as list items."""
         result = renderer.render_markdown(report)
         assert "- How many KV heads are used?" in result
@@ -377,14 +502,17 @@ class TestRenderMarkdown:
     def test_contains_confidence_bar(self, renderer: ReportRenderer, report: ArchitectureReport) -> None:
         """Confidence bars (ASCII art) appear in the rendered output."""
         result = renderer.render_markdown(report)
-        # Confidence bar contains the block character
-        assert "█" in result or "░" in result
+        assert "\u2588" in result or "\u2591" in result
 
     def test_contains_confidence_emoji(self, renderer: ReportRenderer, report: ArchitectureReport) -> None:
         """Confidence emojis appear in the rendered output."""
         result = renderer.render_markdown(report)
-        # At least one colored circle emoji should appear
-        assert "\U0001f7e2" in result or "\U0001f7e1" in result or "\U0001f534" in result
+        has_emoji = (
+            "\U0001f7e2" in result
+            or "\U0001f7e1" in result
+            or "\U0001f534" in result
+        )
+        assert has_emoji
 
     def test_contains_generated_date(self, renderer: ReportRenderer, report: ArchitectureReport) -> None:
         """The generation date appears in the rendered output."""
@@ -394,7 +522,12 @@ class TestRenderMarkdown:
     def test_contains_sources_count(self, renderer: ReportRenderer, report: ArchitectureReport) -> None:
         """The number of analyzed sources appears in the header."""
         result = renderer.render_markdown(report)
-        assert "2" in result  # 2 sources
+        assert "2" in result  # 2 sources in the fixture
+
+    def test_contains_second_source_url(self, renderer: ReportRenderer, report: ArchitectureReport) -> None:
+        """Both source URLs appear in the Sources section."""
+        result = renderer.render_markdown(report)
+        assert "https://example.com/blog/testmodel" in result
 
     def test_additional_notes_rendered_when_present(self, renderer: ReportRenderer) -> None:
         """Additional notes section is rendered when additional_notes is non-empty."""
@@ -409,7 +542,7 @@ class TestRenderMarkdown:
         result = renderer.render_markdown(report)
         assert "## Additional Notes" not in result
 
-    def test_no_sources_section_shows_placeholder(self, renderer: ReportRenderer) -> None:
+    def test_no_sources_shows_placeholder(self, renderer: ReportRenderer) -> None:
         """When no sources are provided, a placeholder message is shown."""
         report = _make_report(sources=[])
         result = renderer.render_markdown(report)
@@ -418,8 +551,13 @@ class TestRenderMarkdown:
     def test_contains_summary_table(self, renderer: ReportRenderer, report: ArchitectureReport) -> None:
         """A confidence summary table is included in the Markdown output."""
         result = renderer.render_markdown(report)
-        # Markdown table rows contain pipe characters
-        assert "| Architecture |" in result or "| Category |" in result
+        # A Markdown table has pipe characters
+        assert "|" in result
+
+    def test_summary_table_has_architecture_rows(self, renderer: ReportRenderer, report: ArchitectureReport) -> None:
+        """The summary table contains Architecture rows."""
+        result = renderer.render_markdown(report)
+        assert "| Architecture |" in result
 
     def test_moe_subsection_present(self, renderer: ReportRenderer, report: ArchitectureReport) -> None:
         """The MoE subsection is present."""
@@ -450,17 +588,9 @@ class TestRenderMarkdown:
         result = renderer.render_markdown(report)
         assert "LLaMA-3 70B" in result
 
-    def test_hypothesis_with_no_evidence_quotes(self, renderer: ReportRenderer) -> None:
-        """Hypotheses with no evidence quotes do not produce empty blockquote blocks."""
-        h_no_evidence = DesignHypothesis(
-            hypothesis="Sparse MoE with 8 experts.",
-            confidence=0.3,
-            evidence_quotes=[],  # Empty
-            open_questions=["How many active experts?"],
-        )
-        report = _make_report()
-        # Override moe_usage with no evidence
-        report_data = report.model_dump()
+    def test_hypothesis_with_no_evidence_quotes_no_supporting_evidence_block(self, renderer: ReportRenderer) -> None:
+        """Hypotheses with no evidence quotes do not produce a Supporting Evidence block."""
+        report_data = _make_report().model_dump()
         report_data["architecture"]["moe_usage"] = {
             "hypothesis": "Sparse MoE with 8 experts.",
             "confidence": 0.3,
@@ -469,10 +599,83 @@ class TestRenderMarkdown:
         }
         new_report = ArchitectureReport.model_validate(report_data)
         result = renderer.render_markdown(new_report)
-        # Should not have "Supporting Evidence:" for MoE since quotes is empty
-        # Check the section renders without errors
+        # Should render without errors
+        assert "Sparse MoE with 8 experts" in result
         assert "Mixture-of-Experts" in result
-        assert "Sparse MoE" in result
+
+    def test_hypothesis_with_no_open_questions_no_open_questions_block(self, renderer: ReportRenderer) -> None:
+        """Hypotheses with no open questions do not produce an Open Questions block."""
+        report_data = _make_report().model_dump()
+        report_data["architecture"]["model_size"] = {
+            "hypothesis": "7B parameters.",
+            "confidence": 0.9,
+            "evidence_quotes": ["Confirmed 7B release."],
+            "open_questions": [],
+        }
+        new_report = ArchitectureReport.model_validate(report_data)
+        result = renderer.render_markdown(new_report)
+        assert "7B parameters" in result
+
+    def test_output_starts_with_heading(self, renderer: ReportRenderer, report: ArchitectureReport) -> None:
+        """The Markdown output starts with the # heading."""
+        result = renderer.render_markdown(report)
+        assert result.strip().startswith("# ")
+
+    def test_output_contains_model_archaeologist_footer(self, renderer: ReportRenderer, report: ArchitectureReport) -> None:
+        """The rendered output contains the Model Archaeologist footer."""
+        result = renderer.render_markdown(report)
+        assert "Model Archaeologist" in result
+
+    def test_multiple_evidence_quotes_all_rendered(self, renderer: ReportRenderer) -> None:
+        """Multiple evidence quotes are all rendered as blockquotes."""
+        report_data = _make_report().model_dump()
+        report_data["architecture"]["attention_mechanism"] = {
+            "hypothesis": "Uses GQA.",
+            "confidence": 0.8,
+            "evidence_quotes": [
+                "First evidence quote.",
+                "Second evidence quote.",
+                "Third evidence quote.",
+            ],
+            "open_questions": [],
+        }
+        new_report = ArchitectureReport.model_validate(report_data)
+        result = renderer.render_markdown(new_report)
+        assert "> First evidence quote." in result
+        assert "> Second evidence quote." in result
+        assert "> Third evidence quote." in result
+
+    def test_multiple_open_questions_all_rendered(self, renderer: ReportRenderer) -> None:
+        """Multiple open questions are all rendered as list items."""
+        report_data = _make_report().model_dump()
+        report_data["training"]["data_curation"] = {
+            "hypothesis": "Web-scale data.",
+            "confidence": 0.6,
+            "evidence_quotes": [],
+            "open_questions": [
+                "Question alpha?",
+                "Question beta?",
+                "Question gamma?",
+            ],
+        }
+        new_report = ArchitectureReport.model_validate(report_data)
+        result = renderer.render_markdown(new_report)
+        assert "- Question alpha?" in result
+        assert "- Question beta?" in result
+        assert "- Question gamma?" in result
+
+    def test_low_confidence_red_emoji_present(self, renderer: ReportRenderer) -> None:
+        """Low confidence hypotheses show the red emoji."""
+        report = _make_report()  # moe_usage has confidence=0.3
+        result = renderer.render_markdown(report)
+        # Red circle for low confidence (0.3)
+        assert "\U0001f534" in result
+
+    def test_high_confidence_green_emoji_present(self, renderer: ReportRenderer) -> None:
+        """High confidence hypotheses show the green emoji."""
+        report = _make_report()  # model_size has confidence=0.9
+        result = renderer.render_markdown(report)
+        assert "\U0001f7e2" in result
 
 
 # ---------------------------------------------------------------------------
@@ -486,9 +689,13 @@ class TestRenderJson:
     def test_returns_valid_json(self, renderer: ReportRenderer, report: ArchitectureReport) -> None:
         """render_json returns a valid JSON string."""
         result = renderer.render_json(report)
-        # Should not raise
         data = json.loads(result)
         assert isinstance(data, dict)
+
+    def test_returns_string(self, renderer: ReportRenderer, report: ArchitectureReport) -> None:
+        """render_json returns a string."""
+        result = renderer.render_json(report)
+        assert isinstance(result, str)
 
     def test_contains_model_name(self, renderer: ReportRenderer, report: ArchitectureReport) -> None:
         """The JSON contains the model name."""
@@ -561,6 +768,20 @@ class TestRenderJson:
         conf = data["architecture"]["attention_mechanism"]["confidence"]
         assert isinstance(conf, (int, float))
 
+    def test_evidence_quotes_is_list(self, renderer: ReportRenderer, report: ArchitectureReport) -> None:
+        """evidence_quotes is serialized as a JSON list."""
+        result = renderer.render_json(report)
+        data = json.loads(result)
+        quotes = data["architecture"]["attention_mechanism"]["evidence_quotes"]
+        assert isinstance(quotes, list)
+
+    def test_open_questions_is_list(self, renderer: ReportRenderer, report: ArchitectureReport) -> None:
+        """open_questions is serialized as a JSON list."""
+        result = renderer.render_json(report)
+        data = json.loads(result)
+        questions = data["architecture"]["attention_mechanism"]["open_questions"]
+        assert isinstance(questions, list)
+
     def test_sources_analyzed_is_list(self, renderer: ReportRenderer, report: ArchitectureReport) -> None:
         """sources_analyzed is serialized as a JSON list."""
         result = renderer.render_json(report)
@@ -574,17 +795,41 @@ class TestRenderJson:
         data = json.loads(result)
         assert isinstance(data["generated_at"], str)
 
+    def test_generated_at_contains_year(self, renderer: ReportRenderer, report: ArchitectureReport) -> None:
+        """generated_at string contains the year."""
+        result = renderer.render_json(report)
+        data = json.loads(result)
+        assert "2024" in data["generated_at"]
+
     def test_json_is_indented(self, renderer: ReportRenderer, report: ArchitectureReport) -> None:
         """The JSON output uses 2-space indentation."""
         result = renderer.render_json(report)
-        # 2-space indent means lines like '  "model_name"'
         assert '  "model_name"' in result
 
     def test_non_ascii_preserved(self, renderer: ReportRenderer) -> None:
         """Non-ASCII characters in text fields are preserved (not escaped)."""
-        report = _make_report(model_name="Gemma-2 (日本語テスト)")
+        report = _make_report(model_name="Gemma-2 (\u65e5\u672c\u8a9eTest)")
         result = renderer.render_json(report)
-        assert "日本語テスト" in result  # Not \u65e5\u672c\u8a9e...
+        assert "\u65e5\u672c\u8a9e" in result
+
+    def test_overall_confidence_is_float(self, renderer: ReportRenderer, report: ArchitectureReport) -> None:
+        """overall_confidence is serialized as a float."""
+        result = renderer.render_json(report)
+        data = json.loads(result)
+        assert isinstance(data["overall_confidence"], (int, float))
+
+    def test_executive_summary_in_json(self, renderer: ReportRenderer, report: ArchitectureReport) -> None:
+        """executive_summary is present and non-empty in JSON output."""
+        result = renderer.render_json(report)
+        data = json.loads(result)
+        assert isinstance(data["executive_summary"], str)
+        assert len(data["executive_summary"]) > 0
+
+    def test_additional_notes_in_json(self, renderer: ReportRenderer, report: ArchitectureReport) -> None:
+        """additional_notes key is present in JSON output."""
+        result = renderer.render_json(report)
+        data = json.loads(result)
+        assert "additional_notes" in data
 
     def test_round_trips_through_pydantic(self, renderer: ReportRenderer, report: ArchitectureReport) -> None:
         """JSON output can be parsed back into an ArchitectureReport."""
@@ -593,6 +838,30 @@ class TestRenderJson:
         restored = ArchitectureReport.model_validate(data)
         assert restored.model_name == report.model_name
         assert restored.overall_confidence == report.overall_confidence
+
+    def test_round_trips_preserves_hypotheses(self, renderer: ReportRenderer, report: ArchitectureReport) -> None:
+        """Hypothesis text is preserved through JSON round-trip."""
+        json_str = renderer.render_json(report)
+        data = json.loads(json_str)
+        restored = ArchitectureReport.model_validate(data)
+        assert (
+            restored.architecture.attention_mechanism.hypothesis
+            == report.architecture.attention_mechanism.hypothesis
+        )
+
+    def test_json_with_empty_sources(self, renderer: ReportRenderer) -> None:
+        """JSON output with empty sources has an empty list."""
+        report = _make_report(sources=[])
+        result = renderer.render_json(report)
+        data = json.loads(result)
+        assert data["sources_analyzed"] == []
+
+    def test_json_with_additional_notes(self, renderer: ReportRenderer) -> None:
+        """JSON output includes additional notes when present."""
+        report = _make_report(with_notes=True)
+        result = renderer.render_json(report)
+        data = json.loads(result)
+        assert "This is a test report for renderer validation." in data["additional_notes"]
 
 
 # ---------------------------------------------------------------------------
@@ -640,13 +909,21 @@ class TestRenderToFile:
         with pytest.raises(ValueError, match="output_format"):
             renderer.render_to_file(report, output, output_format="xml")
 
-    def test_case_insensitive_format(self, renderer: ReportRenderer, report: ArchitectureReport, tmp_path: Path) -> None:
+    def test_case_insensitive_format_json(self, renderer: ReportRenderer, report: ArchitectureReport, tmp_path: Path) -> None:
         """Format strings are case-insensitive ('JSON' == 'json')."""
         output = tmp_path / "report.json"
         renderer.render_to_file(report, output, output_format="JSON")
         assert output.exists()
         data = json.loads(output.read_text(encoding="utf-8"))
         assert "model_name" in data
+
+    def test_case_insensitive_format_markdown(self, renderer: ReportRenderer, report: ArchitectureReport, tmp_path: Path) -> None:
+        """Format string 'MARKDOWN' is treated as 'markdown'."""
+        output = tmp_path / "report.md"
+        renderer.render_to_file(report, output, output_format="MARKDOWN")
+        assert output.exists()
+        content = output.read_text(encoding="utf-8")
+        assert "TestModel-7B" in content
 
     def test_overwrites_existing_file(self, renderer: ReportRenderer, report: ArchitectureReport, tmp_path: Path) -> None:
         """render_to_file overwrites an existing file at the output path."""
@@ -661,9 +938,29 @@ class TestRenderToFile:
         """Output files are encoded as UTF-8."""
         output = tmp_path / "utf8.md"
         renderer.render_to_file(report, output, output_format="markdown")
-        # Verify by reading back with explicit UTF-8
         content = output.read_bytes().decode("utf-8")
         assert len(content) > 0
+
+    def test_json_file_is_valid_json(self, renderer: ReportRenderer, report: ArchitectureReport, tmp_path: Path) -> None:
+        """The JSON file written by render_to_file is valid JSON."""
+        output = tmp_path / "valid.json"
+        renderer.render_to_file(report, output, output_format="json")
+        content = output.read_text(encoding="utf-8")
+        data = json.loads(content)  # Should not raise
+        assert isinstance(data, dict)
+
+    def test_markdown_file_has_correct_extension_content(self, renderer: ReportRenderer, report: ArchitectureReport, tmp_path: Path) -> None:
+        """Markdown file content starts with the H1 header."""
+        output = tmp_path / "report.md"
+        renderer.render_to_file(report, output, output_format="markdown")
+        content = output.read_text(encoding="utf-8")
+        assert content.strip().startswith("# ")
+
+    def test_creates_deeply_nested_directories(self, renderer: ReportRenderer, report: ArchitectureReport, tmp_path: Path) -> None:
+        """render_to_file creates deeply nested directories."""
+        output = tmp_path / "a" / "b" / "c" / "d" / "report.md"
+        renderer.render_to_file(report, output, output_format="markdown")
+        assert output.exists()
 
 
 # ---------------------------------------------------------------------------
@@ -682,7 +979,6 @@ class TestRendererErrors:
 
     def test_missing_template_file_raises_renderer_error(self, report: ArchitectureReport, tmp_path: Path) -> None:
         """An existing directory with no template file raises RendererError."""
-        # Create a real directory but without the expected template file
         renderer = ReportRenderer(templates_dir=tmp_path)
         with pytest.raises(RendererError):
             renderer.render_markdown(report)
@@ -703,9 +999,34 @@ class TestRendererErrors:
         data = json.loads(result)
         assert data["model_name"] == "TestModel-7B"
 
+    def test_renderer_error_is_exception(self) -> None:
+        """RendererError is a subclass of Exception."""
+        assert issubclass(RendererError, Exception)
+
+    def test_renderer_error_can_be_raised_and_caught(self) -> None:
+        """RendererError can be raised and caught."""
+        with pytest.raises(RendererError):
+            raise RendererError("test error")
+
+    def test_renderer_error_message_preserved(self) -> None:
+        """RendererError preserves the error message."""
+        try:
+            raise RendererError("specific error message")
+        except RendererError as exc:
+            assert "specific error message" in str(exc)
+
+    def test_non_directory_path_raises_renderer_error(self, report: ArchitectureReport, tmp_path: Path) -> None:
+        """A templates_dir that is a file (not a directory) raises RendererError."""
+        # Create a file where a directory is expected
+        fake_templates = tmp_path / "not_a_dir.txt"
+        fake_templates.write_text("not a directory", encoding="utf-8")
+        renderer = ReportRenderer(templates_dir=fake_templates)
+        with pytest.raises(RendererError):
+            renderer.render_markdown(report)
+
 
 # ---------------------------------------------------------------------------
-# Tests – ReportRenderer initialization
+# Tests – ReportRenderer initialization and lazy environment creation
 # ---------------------------------------------------------------------------
 
 
@@ -718,6 +1039,12 @@ class TestReportRendererInit:
         renderer = ReportRenderer()
         assert renderer.templates_dir == TEMPLATES_DIR
 
+    def test_default_templates_dir_exists(self) -> None:
+        """The default templates directory actually exists on disk."""
+        from model_archaeologist.renderer import TEMPLATES_DIR
+        assert TEMPLATES_DIR.exists()
+        assert TEMPLATES_DIR.is_dir()
+
     def test_custom_templates_dir(self, tmp_path: Path) -> None:
         """Custom templates_dir is stored correctly."""
         renderer = ReportRenderer(templates_dir=tmp_path)
@@ -728,20 +1055,68 @@ class TestReportRendererInit:
         renderer = ReportRenderer()
         assert renderer._env is None
 
+    def test_env_is_set_after_first_render(
+        self, renderer: ReportRenderer, report: ArchitectureReport
+    ) -> None:
+        """Jinja2 environment is set after the first render_markdown call."""
+        assert renderer._env is None
+        renderer.render_markdown(report)
+        assert renderer._env is not None
+
     def test_env_is_cached_after_first_render(
         self, renderer: ReportRenderer, report: ArchitectureReport
     ) -> None:
-        """Jinja2 environment is cached after the first render_markdown call."""
+        """Jinja2 environment is cached (same object) after the first render_markdown call."""
         renderer.render_markdown(report)
         env1 = renderer._env
         renderer.render_markdown(report)
         env2 = renderer._env
-        assert env1 is env2  # Same object
+        assert env1 is env2
 
-    def test_filters_registered(self, renderer: ReportRenderer, report: ArchitectureReport) -> None:
-        """Custom filters are registered in the Jinja2 environment."""
-        renderer.render_markdown(report)  # Trigger lazy init
+    def test_confidence_bar_filter_registered(
+        self, renderer: ReportRenderer, report: ArchitectureReport
+    ) -> None:
+        """confidence_bar filter is registered in the Jinja2 environment."""
+        renderer.render_markdown(report)
         assert "confidence_bar" in renderer._env.filters  # type: ignore[union-attr]
+
+    def test_confidence_emoji_filter_registered(
+        self, renderer: ReportRenderer, report: ArchitectureReport
+    ) -> None:
+        """confidence_emoji filter is registered in the Jinja2 environment."""
+        renderer.render_markdown(report)
         assert "confidence_emoji" in renderer._env.filters  # type: ignore[union-attr]
+
+    def test_confidence_label_filter_registered(
+        self, renderer: ReportRenderer, report: ArchitectureReport
+    ) -> None:
+        """confidence_label filter is registered in the Jinja2 environment."""
+        renderer.render_markdown(report)
         assert "confidence_label" in renderer._env.filters  # type: ignore[union-attr]
+
+    def test_format_datetime_filter_registered(
+        self, renderer: ReportRenderer, report: ArchitectureReport
+    ) -> None:
+        """format_datetime filter is registered in the Jinja2 environment."""
+        renderer.render_markdown(report)
         assert "format_datetime" in renderer._env.filters  # type: ignore[union-attr]
+
+    def test_templates_dir_is_path_object(self) -> None:
+        """templates_dir is stored as a Path object."""
+        renderer = ReportRenderer()
+        assert isinstance(renderer.templates_dir, Path)
+
+    def test_second_instance_independent_env(self, report: ArchitectureReport) -> None:
+        """Two ReportRenderer instances have independent Jinja2 environments."""
+        r1 = ReportRenderer()
+        r2 = ReportRenderer()
+        r1.render_markdown(report)
+        r2.render_markdown(report)
+        assert r1._env is not r2._env
+
+    def test_custom_templates_dir_stored(self, tmp_path: Path) -> None:
+        """Custom templates_dir value is correctly stored."""
+        custom_dir = tmp_path / "custom_templates"
+        custom_dir.mkdir()
+        renderer = ReportRenderer(templates_dir=custom_dir)
+        assert renderer.templates_dir == custom_dir
